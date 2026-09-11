@@ -76,6 +76,9 @@ class TrajectoryPredictor:
         # Per-track Kalman filters: track_id → KalmanFilter
         self._filters = {}
 
+        # Per-track vehicle class label: track_id → str
+        self._classes = {}
+
         # Timestamp of last update per track, for stale cleanup
         self._last_seen = {}
 
@@ -99,6 +102,7 @@ class TrajectoryPredictor:
             history = obj["history"]
             active_ids.add(track_id)
             self._last_seen[track_id] = timestamp
+            self._classes[track_id] = obj.get("class", "unknown")
 
             # Get the most recent position
             x, y, t = history[-1]
@@ -153,6 +157,7 @@ class TrajectoryPredictor:
         for tid in stale_ids:
             del self._filters[tid]
             self._last_seen.pop(tid, None)
+            self._classes.pop(tid, None)
 
     def get_filter_count(self):
         """Return the number of active Kalman filters (for diagnostics)."""
@@ -324,4 +329,5 @@ class TrajectoryPredictor:
             "track_id": track_id,
             "predictions": predictions,
             "velocity": (vx, vy),
+            "class": self._classes.get(track_id, "unknown"),
         }

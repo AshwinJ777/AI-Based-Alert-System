@@ -388,6 +388,13 @@ def render_alert_card(alert):
     ttc = alert.get("time_to_collision", 0)
     ts = format_timestamp(alert.get("timestamp", 0))
     location = alert.get("location", "Unknown")
+    
+    # New fields
+    coll_point = alert.get("collision_point")
+    cp_text = f"({int(coll_point[0])}, {int(coll_point[1])})" if coll_point else "N/A"
+    
+    class_a = alert.get("vehicle_a_class", "unknown")
+    class_b = alert.get("vehicle_b_class", "unknown")
 
     vid_a = vehicles[0] if len(vehicles) > 0 else "?"
     vid_b = vehicles[1] if len(vehicles) > 1 else "?"
@@ -401,15 +408,15 @@ def render_alert_card(alert):
         <div class="card-body">
             <div class="card-field">
                 <span class="field-label">Vehicles</span>
-                <span class="field-value">ID {vid_a} &harr; ID {vid_b}</span>
+                <span class="field-value">ID {vid_a} ({class_a}) &harr; ID {vid_b} ({class_b})</span>
             </div>
             <div class="card-field">
                 <span class="field-label">Time to Collision</span>
                 <span class="field-value ttc-highlight">{ttc:.2f}s</span>
             </div>
             <div class="card-field">
-                <span class="field-label">Location</span>
-                <span class="field-value">{location}</span>
+                <span class="field-label">Collision Point</span>
+                <span class="field-value">{cp_text}</span>
             </div>
             <div class="card-field">
                 <span class="field-label">Detected At</span>
@@ -501,7 +508,8 @@ def draw_prediction_trails(frame, predictions):
 
 def process_video_live(video_path, frame_placeholder, stats_placeholder,
                        alert_feed_placeholder, progress_bar,
-                       frame_skip=3, max_frames=None):
+                       frame_skip=3, max_frames=None,
+                       focus_mode=False, debug_mode=False):
     """
     Process the video through all 6 modules and stream annotated
     frames to the Streamlit dashboard in real time.
@@ -512,6 +520,7 @@ def process_video_live(video_path, frame_placeholder, stats_placeholder,
     from prediction.kalman_filter import TrajectoryPredictor
     from risk_scoring.ttc import RiskScorer
     from alerts.alert_generator import AlertGenerator
+    from alerts.collision_renderer import render_collision_frame
 
     # Initialize all modules
     camera = CameraFeed(video_path, frame_skip=frame_skip)
@@ -576,14 +585,14 @@ def process_video_live(video_path, frame_placeholder, stats_placeholder,
         # ---- Draw annotations on frame ----
         annotated = frame_data["frame"].copy()
 
-        # Draw tracking boxes (from Module 3)
-        annotated = tracker.draw_tracks(annotated, tracked_objects)
-
-        # Draw predicted trajectories
-        annotated = draw_prediction_trails(annotated, predictions)
-
-        # Draw risk overlays (lines between at-risk vehicles)
-        annotated = draw_risk_overlay(annotated, risk_events, tracked_objects)
+        annotated = render_collision_frame(
+            annotated, 
+            tracked_objects, 
+            predictions, 
+            risk_events,
+            focus_mode=focus_mode, 
+            debug_mode=debug_mode
+        )
 
         # Draw HUD overlay
         fps_val = 1.0 / inf_time if inf_time > 0 else 0
@@ -729,13 +738,15 @@ def show_static_dashboard():
         table_data = []
         for a in alerts_reversed:
             vehicles = a.get("vehicles_involved", [])
+            cp = a.get("collision_point")
+            cp_str = f"({int(cp[0])}, {int(cp[1])})" if cp else "-"
             table_data.append({
                 "Time": format_timestamp(a.get("timestamp", 0)),
-                "Vehicle A": vehicles[0] if len(vehicles) > 0 else "-",
-                "Vehicle B": vehicles[1] if len(vehicles) > 1 else "-",
+                "Vehicle A": f"{vehicles[0] if len(vehicles) > 0 else '-'} ({a.get('vehicle_a_class', '?')})",
+                "Vehicle B": f"{vehicles[1] if len(vehicles) > 1 else '-'} ({a.get('vehicle_b_class', '?')})",
                 "TTC (sec)": f"{a.get('time_to_collision', 0):.3f}",
                 "Severity": a.get("severity", "-").upper(),
-                "Location": a.get("location", "-"),
+                "Collision Point": cp_str,
             })
         st.dataframe(table_data, use_container_width=True, hide_index=True)
 
@@ -799,12 +810,20 @@ def main():
                 st.error(f"Video not found: {video_file}")
                 start_btn = False
             else:
+                st.markdown("### View Options")
+                focus_mode = st.checkbox("🎯 Focus on Collision", value=False,
+                    help="When active, zooms into the collision region and dims unrelated vehicles.")
+                debug_mode = st.checkbox("🐛 Debug Mode", value=False,
+                    help="Show trajectory details, CPA distance, and velocity vectors.")
+                
                 start_btn = st.button("Start Live Tracking",
                                       type="primary", use_container_width=True)
         else:
             video_file = VIDEO_PATH
             start_btn = False
             frame_skip = 3
+            focus_mode = False
+            debug_mode = False
 
             if st.button("Refresh Data", use_container_width=True):
                 st.rerun()
@@ -870,6 +889,8 @@ def main():
             alert_feed_placeholder,
             progress_bar,
             frame_skip=frame_skip,
+            focus_mode=focus_mode,
+            debug_mode=debug_mode,
         )
 
         # Show completion message

@@ -46,6 +46,8 @@ nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
+.jsonl
+
 
 # IDEs
 .idea/

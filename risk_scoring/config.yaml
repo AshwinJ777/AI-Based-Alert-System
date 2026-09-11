@@ -9,3 +9,8 @@ proximity_radius: 300.0
 
 # Minimum closing speed to consider (filters out near-stationary convergence noise)
 min_closing_speed: 1.0         # pixels/s (or meters/s if calibrated)
+
+# Trajectory intersection validation
+collision_distance_threshold: 50.0     # pixels — max CPA distance to consider a collision
+trajectory_intersection_tolerance: 60.0 # pixels — tolerance for path proximity at any horizon
+time_difference_tolerance: 1.5          # seconds — max arrival-time difference at CPA

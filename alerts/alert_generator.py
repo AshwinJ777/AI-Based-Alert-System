@@ -176,6 +176,9 @@ class AlertGenerator:
             "time_to_collision": risk_event["ttc"],
             "severity": risk_event["severity"],
             "location": self.location,
+            "collision_point": risk_event.get("collision_point"),
+            "vehicle_a_class": risk_event.get("vehicle_a_class", "unknown"),
+            "vehicle_b_class": risk_event.get("vehicle_b_class", "unknown"),
         }
 
     def _is_in_cooldown(self, pair, current_time):
