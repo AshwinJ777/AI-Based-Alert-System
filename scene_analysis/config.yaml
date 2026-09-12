@@ -1,0 +1,23 @@
+# Scene Analysis configuration
+
+# Movement Analyzer
+min_history_points: 5           # Minimum trajectory points needed to classify direction
+smoothing_window: 5             # Number of points for moving-average smoothing
+min_displacement: 15.0          # Minimum total displacement (px) to classify a direction
+min_movement_confidence: 0.5    # Below this confidence, direction = UNKNOWN
+
+# Trajectory Clusterer
+cluster_min_trajectories: 5     # Minimum trajectories to form a movement group
+cluster_angular_tolerance: 45.0 # degrees — trajectories within this angle are grouped
+
+# Conflict Zone Detector
+min_observations: 50            # Minimum completed trajectories before declaring zones
+crossing_angle_threshold: 30.0  # degrees — minimum angle between groups to be "crossing"
+zone_merge_radius: 80.0         # pixels — zones closer than this are merged
+zone_min_crossings: 3           # Minimum crossing-point observations to declare a zone
+zone_confidence_decay: 0.995    # Per-frame decay factor for zone confidence
+zone_max_radius: 200.0          # pixels — cap on zone radius
+
+# Risk integration
+use_conflict_zones: true        # If true, TTC is only computed for pairs near a conflict zone
+zone_approach_radius: 1.5       # Multiplier on zone radius for "approaching the zone" check

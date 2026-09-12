@@ -33,6 +33,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from prediction.kalman_filter import TrajectoryPredictor
 from risk_scoring.ttc import RiskScorer
 from alerts.alert_generator import AlertGenerator
+from scene_analysis.movement_analyzer import MovementAnalyzer
+from scene_analysis.trajectory_clusterer import TrajectoryClustering
+from scene_analysis.conflict_zone_detector import ConflictZoneDetector
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +142,11 @@ def run_full_pipeline(video_path):
     alerter = AlertGenerator()
     alerter.clear_log()
 
+    # Scene analysis modules
+    movement_analyzer = MovementAnalyzer()
+    traj_clusterer = TrajectoryClustering()
+    zone_detector = ConflictZoneDetector()
+
     frame_count = 0
     total_alerts = 0
 
@@ -161,11 +169,20 @@ def run_full_pipeline(video_path):
         if not tracked_objects:
             continue
 
+        # Scene Analysis: Movement + Conflict Zones
+        movement_analyzer.analyze(tracked_objects)
+        traj_clusterer.update(tracked_objects, timestamp)
+        zone_detector.update(tracked_objects, traj_clusterer, timestamp)
+
         # Module 4: Prediction
         predictions = predictor.update(tracked_objects, timestamp)
 
-        # Module 5: Risk Scoring
-        risk_events = scorer.evaluate(predictions)
+        # Module 5: Risk Scoring (with scene analysis pre-filtering)
+        risk_events = scorer.evaluate(
+            predictions,
+            tracked_objects=tracked_objects,
+            conflict_zone_detector=zone_detector
+        )
 
         # Module 6: Alert Generation
         if risk_events:
@@ -182,9 +199,23 @@ def run_full_pipeline(video_path):
                   f"{total_alerts} alerts total")
 
     camera.release()
+
+    # Scene analysis summary
+    groups = traj_clusterer.get_group_summaries()
+    zones = zone_detector.get_zone_summaries()
+
     stats = alerter.get_stats()
     print(f"\n  Done! {frame_count} frames processed.")
     print(f"  Total alerts generated: {stats['total_alerts']}")
+    print(f"\n  Scene Analysis:")
+    print(f"    Movement groups: {len(groups)}")
+    for g in groups:
+        print(f"      {g['direction']}: {g['count']} vehicles")
+    print(f"    Conflict zones: {len(zones)}")
+    for z in zones:
+        print(f"      Zone {z['zone_id']}: center=({z['center'][0]:.0f},{z['center'][1]:.0f}), "
+              f"radius={z['radius']:.0f}, confidence={z['confidence']:.2f}, "
+              f"groups={z['movement_groups']}")
     print(f"\n  Alert log: alerts/alert_log.jsonl")
     print(f"  Run dashboard: python -m streamlit run alerts/dashboard.py")
 
@@ -209,6 +240,11 @@ def run_simulated_demo():
     alerter = AlertGenerator()
     alerter.clear_log()
 
+    # Scene analysis modules
+    movement_analyzer = MovementAnalyzer()
+    traj_clusterer = TrajectoryClustering()
+    zone_detector = ConflictZoneDetector()
+
     frames = generate_collision_scenario(n_frames=100, fps=10)
 
     total_alerts = 0
@@ -217,11 +253,20 @@ def run_simulated_demo():
     print("  Simulating 100 frames (10 seconds at 10 FPS)...\n")
 
     for timestamp, tracked_objects in frames:
+        # Scene Analysis
+        movement_analyzer.analyze(tracked_objects)
+        traj_clusterer.update(tracked_objects, timestamp)
+        zone_detector.update(tracked_objects, traj_clusterer, timestamp)
+
         # Module 4: Prediction
         predictions = predictor.update(tracked_objects, timestamp)
 
-        # Module 5: Risk Scoring
-        risk_events = scorer.evaluate(predictions)
+        # Module 5: Risk Scoring (with scene analysis)
+        risk_events = scorer.evaluate(
+            predictions,
+            tracked_objects=tracked_objects,
+            conflict_zone_detector=zone_detector
+        )
         risk_event_count += len(risk_events)
 
         # Module 6: Alert Generation
@@ -238,6 +283,8 @@ def run_simulated_demo():
     # Summary
     stats = alerter.get_stats()
     history = alerter.get_alert_history()
+    groups = traj_clusterer.get_group_summaries()
+    zones = zone_detector.get_zone_summaries()
 
     print(f"\n{'=' * 60}")
     print(f"  SIMULATION RESULTS")
@@ -249,6 +296,18 @@ def run_simulated_demo():
     print(f"  High severity:          {stats['recent_high']}")
     print(f"  Medium severity:        {stats['recent_medium']}")
     print(f"  Alerts suppressed:      {risk_event_count - stats['total_alerts']} (cooldown dedup)")
+    print()
+
+    # Scene analysis summary
+    print(f"  Scene Analysis:")
+    print(f"    Movement groups: {len(groups)}")
+    for g in groups:
+        print(f"      {g['direction']}: {g['count']} vehicles")
+    print(f"    Conflict zones: {len(zones)}")
+    for z in zones:
+        print(f"      Zone {z['zone_id']}: center=({z['center'][0]:.0f},{z['center'][1]:.0f}), "
+              f"radius={z['radius']:.0f}, confidence={z['confidence']:.2f}, "
+              f"groups={z['movement_groups']}")
     print()
 
     # Print alert log contents

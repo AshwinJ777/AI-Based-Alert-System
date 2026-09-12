@@ -22,7 +22,14 @@ Interface contracts (from architecture.md §7):
         {
             "vehicle_pair": (int, int),   # sorted (smaller_id, larger_id)
             "ttc": float,                 # seconds
-            "severity": "high" | "medium"
+            "severity": "high" | "medium",
+            "collision_point": (x, y),    # predicted intersection point
+            "cpa_distance": float,        # distance at closest approach
+            "vehicle_a_class": str,
+            "vehicle_b_class": str,
+            "vehicle_a_velocity": (vx, vy),
+            "vehicle_b_velocity": (vx, vy),
+            "conflict_zone_id": int | None
         }
 """
 
@@ -57,19 +64,34 @@ class RiskScorer:
         self.collision_dist_thresh = self.config.get("collision_distance_threshold", 50.0)
         self.traj_intersect_tol = self.config.get("trajectory_intersection_tolerance", 60.0)
         self.time_diff_tol = self.config.get("time_difference_tolerance", 1.5)
+        self.min_movement_confidence = self.config.get("minimum_movement_confidence", 0.5)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def evaluate(self, predicted_trajectories):
+    def evaluate(self, predicted_trajectories, tracked_objects=None,
+                 conflict_zone_detector=None):
         """
         Evaluate all vehicle pairs for collision risk using trajectory intersection.
+
+        :param predicted_trajectories: List of PredictedTrajectory dicts.
+        :param tracked_objects: Optional list of TrackedObject dicts (with movement_direction).
+                               When provided, direction-based pre-filtering is applied.
+        :param conflict_zone_detector: Optional ConflictZoneDetector instance.
+                                       When provided, zone-proximity pre-filtering is applied.
+        :return: List of RiskEvent dicts.
         """
         if len(predicted_trajectories) < 2:
             return []
 
         by_id = {pt["track_id"]: pt for pt in predicted_trajectories}
+
+        # Build a lookup for tracked objects (for direction info)
+        obj_by_id = {}
+        if tracked_objects:
+            obj_by_id = {o["track_id"]: o for o in tracked_objects}
+
         risk_events = []
 
         for id_a, id_b in combinations(sorted(by_id.keys()), 2):
@@ -79,6 +101,12 @@ class RiskScorer:
             if not self._within_proximity(traj_a, traj_b):
                 continue
 
+            # ---- Scene analysis pre-filter (direction check) ----
+            if obj_by_id:
+                skip = self._direction_prefilter(id_a, id_b, obj_by_id)
+                if skip:
+                    continue
+
             result = self._compute_ttc(traj_a, traj_b)
             if result is None:
                 continue
@@ -86,6 +114,16 @@ class RiskScorer:
             ttc, cpa_dist, coll_point = result
 
             if ttc < self.ttc_threshold:
+                # ---- Scene analysis pre-filter (conflict zone check) ----
+                zone_id = None
+                if conflict_zone_detector and coll_point and not conflict_zone_detector.is_learning:
+                    zone = conflict_zone_detector.is_near_conflict_zone(
+                        coll_point, radius_multiplier=1.5
+                    )
+                    if zone is None:
+                        continue  # Collision point not near any known conflict zone
+                    zone_id = zone.zone_id
+
                 severity = self._classify_severity(ttc)
                 risk_events.append({
                     "vehicle_pair": (id_a, id_b),
@@ -96,10 +134,40 @@ class RiskScorer:
                     "vehicle_a_class": traj_a.get("class", "unknown"),
                     "vehicle_b_class": traj_b.get("class", "unknown"),
                     "vehicle_a_velocity": traj_a.get("velocity", (0.0, 0.0)),
-                    "vehicle_b_velocity": traj_b.get("velocity", (0.0, 0.0))
+                    "vehicle_b_velocity": traj_b.get("velocity", (0.0, 0.0)),
+                    "conflict_zone_id": zone_id,
                 })
 
         return risk_events
+
+    def _direction_prefilter(self, id_a, id_b, obj_by_id):
+        """
+        Return True if the pair should be SKIPPED based on movement direction.
+
+        Pairs moving in the same direction or directly opposite (head-on along
+        the same axis) are generally non-conflicting at an intersection.
+        """
+        from scene_analysis.movement_analyzer import are_directions_conflicting
+
+        obj_a = obj_by_id.get(id_a)
+        obj_b = obj_by_id.get(id_b)
+
+        if not obj_a or not obj_b:
+            return False  # No info — don't filter
+
+        dir_a = obj_a.get("movement_direction", "UNKNOWN")
+        dir_b = obj_b.get("movement_direction", "UNKNOWN")
+        conf_a = obj_a.get("movement_confidence", 0.0)
+        conf_b = obj_b.get("movement_confidence", 0.0)
+
+        # Only apply direction filter when both directions are confident
+        if conf_a < self.min_movement_confidence or conf_b < self.min_movement_confidence:
+            return False  # Not confident enough — don't filter
+
+        if not are_directions_conflicting(dir_a, dir_b):
+            return True  # Same/opposite direction — skip
+
+        return False  # Conflicting directions — keep
 
     # ------------------------------------------------------------------
     # Core TTC calculation

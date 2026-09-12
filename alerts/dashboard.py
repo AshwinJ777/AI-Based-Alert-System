@@ -521,6 +521,9 @@ def process_video_live(video_path, frame_placeholder, stats_placeholder,
     from risk_scoring.ttc import RiskScorer
     from alerts.alert_generator import AlertGenerator
     from alerts.collision_renderer import render_collision_frame
+    from scene_analysis.movement_analyzer import MovementAnalyzer
+    from scene_analysis.trajectory_clusterer import TrajectoryClustering
+    from scene_analysis.conflict_zone_detector import ConflictZoneDetector
 
     # Initialize all modules
     camera = CameraFeed(video_path, frame_skip=frame_skip)
@@ -532,6 +535,10 @@ def process_video_live(video_path, frame_placeholder, stats_placeholder,
     scorer = RiskScorer()
     alerter = AlertGenerator()
     alerter.clear_log()
+
+    movement_analyzer = MovementAnalyzer()
+    traj_clusterer = TrajectoryClustering()
+    zone_detector = ConflictZoneDetector()
 
     total_frames = camera.total_frames // frame_skip
     frame_count = 0
@@ -562,14 +569,24 @@ def process_video_live(video_path, frame_placeholder, stats_placeholder,
         for obj in tracked_objects:
             vehicles_seen.add(obj["track_id"])
 
+        # Scene Analysis
+        if tracked_objects:
+            movement_analyzer.analyze(tracked_objects)
+            traj_clusterer.update(tracked_objects, timestamp)
+            zone_detector.update(tracked_objects, traj_clusterer, timestamp)
+
         # Module 4: Prediction
         predictions = []
         risk_events = []
         if tracked_objects:
             predictions = predictor.update(tracked_objects, timestamp)
 
-            # Module 5: Risk Scoring
-            risk_events = scorer.evaluate(predictions)
+            # Module 5: Risk Scoring (with scene analysis pre-filtering)
+            risk_events = scorer.evaluate(
+                predictions, 
+                tracked_objects=tracked_objects, 
+                conflict_zone_detector=zone_detector
+            )
 
             # Module 6: Alert Generation
             if risk_events:
@@ -591,7 +608,9 @@ def process_video_live(video_path, frame_placeholder, stats_placeholder,
             predictions, 
             risk_events,
             focus_mode=focus_mode, 
-            debug_mode=debug_mode
+            debug_mode=debug_mode,
+            conflict_zones=zone_detector.get_active_zones(),
+            movement_groups=traj_clusterer.get_groups()
         )
 
         # Draw HUD overlay

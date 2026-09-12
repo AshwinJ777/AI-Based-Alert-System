@@ -23,7 +23,9 @@ Interface contracts (from architecture.md §7):
         {
             "track_id": int,
             "predictions": [(x, y, future_timestamp), ...],
-            "velocity": (vx, vy)
+            "velocity": (vx, vy),
+            "class": str,
+            "uncertainties": [np.ndarray(2,2), ...]  # position covariance per horizon
         }
 """
 
@@ -304,6 +306,7 @@ class TrajectoryPredictor:
         kf_copy = copy.deepcopy(kf)
 
         predictions = []
+        uncertainties = []
         prev_horizon = 0.0
 
         for horizon in sorted(self.prediction_horizons):
@@ -318,11 +321,15 @@ class TrajectoryPredictor:
             py = float(kf_copy.x[1])
             future_t = current_time + horizon
 
+            # Extract the 2×2 position covariance sub-matrix
+            pos_cov = kf_copy.P[:2, :2].copy()
+
             # Convert back to pixel space if we're working in world coords
             if self.transformer and self.transformer.is_calibrated():
                 px, py = self.transformer.world_to_pixel(px, py)
 
             predictions.append((px, py, future_t))
+            uncertainties.append(pos_cov)
             prev_horizon = horizon
 
         return {
@@ -330,4 +337,5 @@ class TrajectoryPredictor:
             "predictions": predictions,
             "velocity": (vx, vy),
             "class": self._classes.get(track_id, "unknown"),
+            "uncertainties": uncertainties,
         }
