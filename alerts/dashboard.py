@@ -27,6 +27,9 @@ import streamlit as st
 # Ensure project root is importable
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from analytics.analytics_page import render_analytics_page
+from analytics.data_collector import SessionDataCollector
+
 
 # ---------------------------------------------------------------------------
 # Page configuration
@@ -540,6 +543,9 @@ def process_video_live(video_path, frame_placeholder, stats_placeholder,
     traj_clusterer = TrajectoryClustering()
     zone_detector = ConflictZoneDetector()
 
+    collector = SessionDataCollector()
+    collector.start(video_path)
+
     total_frames = camera.total_frames // frame_skip
     frame_count = 0
     total_alerts = 0
@@ -598,6 +604,15 @@ def process_video_live(video_path, frame_placeholder, stats_placeholder,
                     else:
                         medium_count += 1
                     recent_alerts.append(a)
+
+        # Record analytics data for this frame
+        collector.record_frame(
+            timestamp=timestamp,
+            detections=detections,
+            tracked_objects=tracked_objects,
+            risk_events=risk_events,
+            predictions=predictions
+        )
 
         # ---- Draw annotations on frame ----
         annotated = frame_data["frame"].copy()
@@ -668,6 +683,9 @@ def process_video_live(video_path, frame_placeholder, stats_placeholder,
             alert_feed_placeholder.markdown(cards_html, unsafe_allow_html=True)
 
     camera.release()
+    
+    # Save the collected session data
+    collector.save()
 
     return {
         "frames": frame_count,
@@ -795,14 +813,14 @@ def main():
 
         mode = st.radio(
             "Dashboard Mode",
-            ["Live Tracking", "Alert History"],
+            ["Live Monitor", "Analytics", "Alert History"],
             index=0,
-            help="Live Tracking processes the video with bounding boxes. Alert History shows past results."
+            help="Navigate between real-time tracking, traffic analytics, and alert logs."
         )
 
         st.markdown("---")
 
-        if mode == "Live Tracking":
+        if mode == "Live Monitor":
             st.markdown("### Video Settings")
             frame_skip = st.slider("Frame Skip", 1, 10, 2,
                                    help="Process every Nth frame. Higher = faster but less smooth.")
@@ -870,7 +888,7 @@ def main():
         """, unsafe_allow_html=True)
 
     # ---- Main content ----
-    if mode == "Live Tracking" and start_btn:
+    if mode == "Live Monitor" and start_btn:
         # Live tracking mode — process video with full pipeline
         st.markdown("""
         <div class="section-header">
@@ -927,7 +945,7 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
-    elif mode == "Live Tracking" and not start_btn:
+    elif mode == "Live Monitor" and not start_btn:
         # Waiting state
         st.markdown("""
         <div class="section-header">
@@ -941,7 +959,7 @@ def main():
         <div class="empty-state">
             <div class="empty-icon">🎥</div>
             <p>Click <strong>Start Live Tracking</strong> in the sidebar to begin
-            processing the Demo video with real-time bounding boxes,
+            processing the video with real-time bounding boxes,
             trajectory predictions, and collision alerts.</p>
         </div>
         """, unsafe_allow_html=True)
@@ -958,6 +976,10 @@ def main():
             """, unsafe_allow_html=True)
             show_static_dashboard()
 
+    elif mode == "Analytics":
+        # New analytics page
+        render_analytics_page()
+        
     else:
         # Alert history mode
         show_static_dashboard()

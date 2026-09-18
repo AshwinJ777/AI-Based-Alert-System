@@ -7,3 +7,4 @@ numpy
 matplotlib
 pytest
 streamlit
+plotly
