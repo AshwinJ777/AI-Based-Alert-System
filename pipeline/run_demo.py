@@ -36,6 +36,8 @@ from alerts.alert_generator import AlertGenerator
 from scene_analysis.movement_analyzer import MovementAnalyzer
 from scene_analysis.trajectory_clusterer import TrajectoryClustering
 from scene_analysis.conflict_zone_detector import ConflictZoneDetector
+from analytics.data_collector import SessionDataCollector
+
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +149,10 @@ def run_full_pipeline(video_path):
     traj_clusterer = TrajectoryClustering()
     zone_detector = ConflictZoneDetector()
 
+    # Analytics Collector
+    collector = SessionDataCollector()
+    collector.start(video_path)
+
     frame_count = 0
     total_alerts = 0
 
@@ -193,12 +199,22 @@ def run_full_pipeline(video_path):
                       f"TTC={alert['time_to_collision']:.2f}s | "
                       f"Severity={alert['severity'].upper()}")
 
+        # Record analytics
+        collector.record_frame(
+            timestamp=timestamp,
+            detections=detections,
+            tracked_objects=tracked_objects,
+            risk_events=risk_events,
+            predictions=predictions
+        )
+
         if frame_count % 50 == 0:
             print(f"  ... processed {frame_count} frames, "
                   f"{len(tracked_objects)} vehicles tracked, "
                   f"{total_alerts} alerts total")
 
     camera.release()
+    collector.save()
 
     # Scene analysis summary
     groups = traj_clusterer.get_group_summaries()
